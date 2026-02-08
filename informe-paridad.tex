@@ -1,0 +1,114 @@
+\documentclass[12pt]{article}
+\usepackage[spanish]{babel}
+\usepackage{array}
+\usepackage{xcolor}
+%opening
+\title{\textbf{{\Huge Informe Practica I}}}
+\author{Adrian Cordero}
+
+\begin{document}
+
+\maketitle
+\newpage
+
+\section{Introducción}
+El presente informe analiza la implementación de una función de paridad en arquitectura MIPS32, comparando los enfoques recursivo e iterativo. Se detalla el uso de la pila, los riesgos asociados y las diferencias con los modelos teóricos.
+
+\section{Implementación de la recursividad y el rol de \$sp}
+La recursividad en MIPS se implementa mediante la gestión manual de la memoria. A diferencia de los lenguajes de alto nivel, el hardware no  ''recuerda'' a dónde debe volver tras una función.
+
+\subsection{El Registro \$ra (Return Address):}
+Al usar \textbf{jal}, la dirección de retorno se guarda en \textcolor{red}{\textbf{\$ra}}. Si la función se llama a sí misma, ese valor se sobrescribe.
+
+\subsection{El Stack Pointer (\$sp):}
+Actúa como un ''ancla'' en la memoria \textbf{RAM}. Para que la recursión funcione, debemos guardar el valor de \textcolor{red}{\textbf{\$ra}} (y cualquier registro \$s o \$t que queramos preservar) en la pila antes de la siguiente llamada.
+
+\subsection{LIFO (Last In, First Out):}
+Cada llamada reserva espacio, pila crece hacia abajo,\textbf{ \textcolor{blue}{addi} \textcolor{red}{\textbf{\$ra}}, \textcolor{red}{\textbf{\$ra}}, -4} y cada retorno libera espacio \textbf{ \textcolor{blue}{addi} \textcolor{red}{\textbf{\$ra}}, \textcolor{red}{\textbf{\$ra}}, 4}
+
+\section{Riesgos de desbordamiento y mitigación}
+Existen dos tipos principales en este contexto:
+\subsection{Stack Overflow:}
+Ocurre si \textbf{n} es muy grande. Cada llamada recursiva consume 4 bytes (o más si guardas más registros). Si la recursión es muy profunda, la pila choca con los datos globales o el heap.
+
+\subsubsection{Mitigación:}
+Usar implementaciones iterativas o limitar el rango de entrada de\textbf{ n}.
+
+\subsection{Desbordamiento de Enteros:}
+Si realizas operaciones aritméticas que superen los 32 bits.
+
+\subsubsection{Mitigación:}
+Usar instrucciones como \textbf{addu} (unsigned) si no necesitas atrapar excepciones, o validar rangos antes de operar.
+
+\section{Diferencias: Iterativo vs. Recursivo}
+
+% TODO: \usepackage{array} required
+\begin{tabular}{|>{\centering\arraybackslash}m{4cm}|>{\centering\arraybackslash}m{4cm}|>{\centering\arraybackslash}m{4cm}|}
+	\hline
+\textbf{	Característica} & \textbf{Implementación Iterativa} & \textbf{Implementación Recursiva} \\
+	\hline
+\textbf{	Memoria (Pila)} & No usa \textcolor{red}{\$sp} & Si usa \textcolor{red}{\$sp} \\
+	\hline
+\textbf{	Registros} & \textcolor{red}{\$a0}, \textcolor{red}{\$v1}, \textcolor{red}{\$t0},  \textcolor{red}{\$ra} & \textcolor{red}{\$a0}, \textcolor{red}{\$v1}, \textcolor{red}{\$t0},  \textcolor{red}{\$ra} que guarda/restaura contentmente \\
+	\hline
+	\textbf{Velocidad} & \textit{\textbf{O(n)}} solo con saltos \textcolor{blue}{j} & \textit{\textbf{O(n)}} con accesos a memoria \textcolor{blue}{sw}/\textcolor{blue}{lw} \\
+	\hline
+\end{tabular}
+
+\section{Ejemplos académicos vs. Código operativo}
+Los libros (como Patterson \& Hennessy) suelen mostrar fragmentos aislados para explicar un concepto. Un código operativo en MARS requiere:
+
+\subsection{Directivas de datos y texto:}
+\textbf{\textcolor{magenta}{\textit{.data y .text.}}}
+
+\subsection{Punto de entrada:}
+La etiqueta\textbf{ main}: y la llamada al sistema para finalizar el programa:\\ \begin{center}
+	\textbf{\textcolor{blue}{li} \textcolor{red}{\$v0}, 10 }
+\end{center}
+
+\subsection{Preservación de registros:}
+Los ejemplos de libros a veces omiten el guardado de registros temporales para mayor claridad, pero en un programa real, esto causaría errores de lógica
+
+\section{Tutorial paso a paso en MARS}
+Para probar tu función paridad:
+
+\subsection{Ensamblar:}
+Haz clic en el icono de la llave inglesa y el destornillador. Revisar que no haya errores en la consola inferior.
+
+\subsection{Preparar Registros:}
+En la pestaña "Registers", busca \$a0 y dale un valor (ej. 5).
+
+\subsection{Ejecución Paso a Paso:}
+Usa el icono de la flecha \textcolor{green}{\textbf{verde}} con un ''\textbf{1}''.
+
+\begin{itemize}
+	\item Observar como \textcolor{red}{\textbf{\$sp}} disminuye en cada \textcolor{blue}{\textbf{jal}}.
+	\item Mirar la pestaña "Data Segment" para ver cómo se guarda el
+		valor de \$ra en la memoria.
+		
+	\item Sigue el flujo hasta que \textcolor{red}{\textbf{\$a0}} llegue a \textbf{0} y comience el "desenrollado" de la pila.
+	
+\end{itemize}
+
+\subsection{Verificar Resultado:}
+Al terminar, el resultado final estará en \textcolor{red}{\textbf{\$v1}}.
+
+\section{Justificación del enfoque}
+Para MIPS, el enfoque iterativo es superior.
+
+\subsection{Eficiencia:}
+El procesador MIPS está diseñado para ejecutar instrucciones simples rápido. El acceso a memoria (sw/lw) es costoso en ciclos de reloj.
+
+\subsection{Claridad:}
+Aunque la recursión es elegante matemáticamente, en ensamblador se vuelve difícil de leer por la gestión constante de la pila. La versión iterativa es un bucle limpio de 5 líneas.
+
+\section{Análisis y Discusión de los Resultados}
+\begin{itemize}
+	\item  La versión recursiva de paridad(100) hará que el puntero de pila \$sp se mueva 100 veces, consumiendo 400 bytes.
+	\item  La versión iterativa hará las mismas 100 vueltas pero sin tocar la memoria RAM, manteniendo el rendimiento al máximo.
+	\item  Conclusión: La recursividad en ensamblador debe reservarse para algoritmos donde la estructura de datos sea inherentemente recursiva (como árboles), pero para paridad o factoriales, la iteración es la elección técnica correcta.
+	
+\end{itemize}
+
+
+\end{document}
