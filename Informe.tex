@@ -1,0 +1,479 @@
+\documentclass[]{article}
+\usepackage[spanish]{babel}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{float}
+
+%opening
+\title{{\huge Practica 2}}
+\author{\huge Adrian Cordero}
+
+\begin{document}
+
+\maketitle
+\newpage
+
+\section{Introducción}
+	El estudio de la arquitectura de computadores requiere comprender la estrecha relación entre la eficiencia de un algoritmo y la estructura del procesador que lo ejecuta. En este contexto, la arquitectura MIPS32 (Microprocessor without Interlocked Pipelined Stages) se presenta como un modelo fundamental basado en la filosofía RISC (Reduced Instruction Set Computer), diseñada para maximizar la velocidad de ejecución mediante un conjunto de instrucciones simplificado y un uso intensivo de registros.
+	\\
+	El presente informe analiza la implementación y el comportamiento de dos estrategias de ordenamiento: QuickSort, basado en el paradigma de "divide y vencerás" y recursividad, y BubbleSort, un modelo iterativo de comparación directa. Sin embargo, el análisis no se limita únicamente a la lógica algorítmica; se centra primordialmente en cómo estas instrucciones interactúan con el camino de datos y la segmentación (Pipeline) del procesador.
+	\\
+	El concepto de Pipeline es el núcleo de este estudio. Esta técnica permite que el procesador MIPS32 ejecute múltiples instrucciones de forma simultánea, dividiendo el ciclo de vida de cada una en cinco etapas: Búsqueda (IF), Decodificación (ID), Ejecución (EX), Memoria (MEM) y Escritura (WB). Durante la ejecución de los algoritmos de ordenamiento, el flujo de este pipeline se ve constantemente desafiado por riesgos de control (saltos condicionales y llamadas a funciones) y riesgos de datos (dependencia de valores entre instrucciones).
+	\\
+	A través del uso del simulador MARS, se busca observar cómo el manejo de registros, la gestión de la pila (stack) y la predicción de saltos determinan el rendimiento real de un programa. Esta transición del código de alto nivel al lenguaje ensamblador permitirá identificar por qué ciertos algoritmos, aunque teóricamente óptimos, deben ser cuidadosamente orquestados para no saturar las unidades funcionales del procesador y aprovechar al máximo la arquitectura segmentada de 32 bits.
+\newpage
+
+\section{Diferencias entre Registros \textbf{\$t} y \textbf{\$s}}
+
+\begin{tabular}{|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|}
+	\hline
+	Característica & Registros Temporales (\$t0–\$t9) & Registros Guardados (\$s0–\$s7) \\
+	\hline
+	Persistencia & Su valor puede cambiar tras un \textbf{jal}. No se garantiza su integridad. & Su valor debe ser el mismo antes y después de una llamada a función. \\
+	\hline
+	Persistencia & Cálculos rápidos, índices de bucles inmediatos y valores intermedios. & Variables importantes que deben sobrevivir a lo largo de toda una subrutina. \\
+	\hline
+\end{tabular}
+\\\\
+En los archivos se ve claramente cómo se aplica esta distinción de dos formas diferentes:
+
+\subsection{En BubbleSort: Uso de preservación de registros \textbf{\$s}}
+
+En tu función BubbleSort, utilizas registros \textbf{\$s0} y \textbf{\$s1} para almacenar la base del arreglo y el tamaño.
+
+\begin{itemize}
+	\item Como \textbf{BubbleSort} usa estos registros para su propia lógica, debe asegurarse de que, cuando la función termine y regrese al main, esos registros tengan el valor que tenían antes. Al final, los restauras con \textbf{lw \$s0},\textbf{ 4(\$sp)}.
+\end{itemize}
+
+\subsection{En QuickSort: Uso de registros \textbf{\$t} y \textbf{recursividad}}
+
+En la función QuickSort, utilizas mayoritariamente registros temporales (\textbf{\$t0}, \textbf{\$t1}, \textbf{\$t2}, etc.) para los punteros \textbf{i}, \textbf{j} y el \textbf{pivote}.
+
+\begin{itemize}
+	\item Para evitar que los datos se corrompan, guardas los argumentos \textbf{\$a0}, \textbf{\$a1} y \textbf{\$a2} en la pila. Aunque usas \textbf{\$t} para la lógica interna del \textbf{do-while}, nota que después de cada llamada recursiva (jal), el código vuelve a cargar los valores necesarios desde la pila (ej. \textbf{lw \$a0},\textbf{ 0(\$sp)}) porque no puede confiar en que los registros mantengan su valor.
+\end{itemize}
+
+\section{Diferencias existen entre los registros \$a0–\$a3, \$v0–\$v1, \$ra y cómo se aplicó esta a la practica}
+
+\begin{tabular}{|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|}
+	\hline
+	\textbf{Registro} & \textbf{Nombre} & \textbf{Función Principal} \\
+	\hline
+	\textbf{\$a0 – \$a3} & \textbf{Arguments} & Se usan para pasar parámetros a una función (la ``entrada''). \\
+	\hline
+	\textbf{\$v0 – \$v1} & \textbf{Values} & Se usan para devolver resultados al finalizar la función (la ``salida'') y para configurar Syscalls. \\
+	\hline
+	\textbf{\$ra} & \textbf{Return Address} & Almacena la dirección de retorno (a dónde debe saltar el programa cuando la función termine). \\
+	\hline
+\end{tabular}
+
+\subsection{Aplicación en la Práctica}
+
+\begin{enumerate}[label=\alph*.]
+	\item \textbf{Paso de Parámetros (\$a0 - \$a3)}
+	\\\\
+	En ambos códigos, usas estos registros como el "puente" de comunicación entre el main y las subrutinas:
+	\begin{itemize}
+		\item  En QuickSort, el main carga la dirección del arreglo en \$a0, el índice izquierdo en \$a1 (0) y el derecho en \$a2 (n-1).
+	\end{itemize}
+	
+	\item Valores de Retorno y Syscalls (\$v0 - \$v1)
+	\\\\ 
+	En los algoritmos, \$v0 tiene un rol dual muy claro:
+	\begin{itemize}
+		\item para decirle al simulador qué operación realizar. Por ejemplo, \textbf{li \$v0, 1} para imprimir un entero o \textbf{li \$v0, 10} para finalizar el programa.
+	\end{itemize}
+	
+	\item Dirección de Retorno (\$ra)
+	Este es el registro más crítico.
+	\begin{itemize}
+		\item \textbf{En BubbleSort:} Como es una función, el \textbf{\$ra} se guarda al inicio y se restaura al final para poder hacer \textbf{jr \$ra.}
+		
+		\item \textbf{En QuickSort:} Aquí es vital. Al ser recursivo, cada \textbf{jal QuickSort} cambia el valor de \textbf{\$ra}. Si no hubieras incluido \textbf{sw \$ra, 12(\$sp)} al principio, el programa entraría en un bucle infinito porque perdería el camino de regreso al \textbf{main}.
+	\end{itemize}
+	
+\end{enumerate}
+
+\section{Como afecta el uso de registros frente a memoria en el rendimiento de los algoritmos 
+	de ordenamiento implementados}
+	
+\subsection{Análisis del Impacto de los Algoritmos}
+
+\begin{enumerate}[label=\alph*.]
+	\item En \textbf{BubbleSort} (El impacto del acceso repetitivo)
+	\\\\
+	El \textbf{BubbleSort} que proporcionado es "pesado" en memoria porque:
+	
+	\begin{itemize}
+		\item En cada iteración del bucle interno $(for_j)$, realizas dos cargas (lw) y, si hay intercambio, dos escrituras (sw).
+		
+		\item Como BubbleSort tiene una complejidad de $O(n^2)$, el número de accesos a memoria crece drásticamente con el tamaño del arreglo.
+	\end{itemize}
+	
+	\item En QuickSort (El impacto de la Pila/Stack)
+	\\\\
+	\textbf{QuickSort} es más eficiente en lógica ($O(n \log n)$ en el caso promedio), pero introduce un uso intensivo de memoria de otro tipo: la Pila.
+	
+	\begin{itemize}
+		\item Cada llamada recursiva ejecuta: addi \$sp, \$sp, -16 seguido de cuatro sw.
+		
+		\item Aunque \textbf{QuickSort} hace menos comparaciones de elementos, gasta tiempo de CPU gestionando la memoria de la pila para salvar los registros \textbf{\$ra} y \textbf{\$a0}.
+	
+	\end{itemize}
+	
+\end{enumerate}
+	
+\subsection{Técnicas de Optimización Aplicadas}
+	En los códigos se aplico (quizás sin saberlo) técnicas para mitigar este impacto:
+	
+	\begin{itemize}
+		\item  \textbf{Carga Local:} En el swap de \textbf{QuickSort}, primero cargas los valores en \textbf{\$t4} y \textbf{\$t5}, y luego haces el intercambio.
+		
+		\item Uso de Punteros: En lugar de recalcular la dirección base cada vez, se calcula el offset (sll y add) y se mantiene en un registro temporal para el acceso inmediato.
+	\end{itemize}
+	
+\section{Impacto del uso de estructuras de control en la
+	eficiencia de los algoritmos en MIPS32}
+	El impacto de las estructuras de control en MIPS32 es crítico porque, a diferencia de los lenguajes de alto nivel donde el compilador hace gran parte del trabajo, en ensamblador tú controlas directamente el Contador de Programa (PC) y el flujo de la tubería (Pipeline) de ejecución.
+	
+\subsection{El Costo de los Saltos y el Pipeline}
+IPS32 utiliza una arquitectura de pipeline (segmentación) de 5 etapas. Cuando ejecutas un salto (j, jal, jr) o una rama condicional (beq, bne), el procesador a veces no sabe cuál es la siguiente instrucción hasta que se evalúa la condición.
+
+	\begin{itemize}
+		\item \textbf{Hazard de Control:} Si el procesador predice mal un salto, debe "limpiar" las instrucciones que ya habían entrado al pipeline, lo que genera ciclos perdidos
+		
+		\item \textbf{Delay Slot:} En arquitecturas MIPS reales, la instrucción inmediatamente después de un salto se ejecuta siempre (aunque el salto se tome).
+		
+	\end{itemize}
+	
+\subsection{Bucles Anidados (Caso: BubbleSort)}
+En el código de BubbleSort, hay un bucle $for_j$ dentro de un $for_i$. El impacto en la eficiencia es masivo por dos razones:
+
+	\begin{itemize}
+		\item \textbf{Multiplicación de Instrucciones:} Cada instrucción dentro del bucle interno se ejecuta $n^2$ veces. Por ejemplo, el cálculo del offset (sll \$t4, \$t1, 2) se repite constantemente
+		
+		\item \textbf{Ramificaciones Frecuentes:} Al final de cada bucle interno, hay un salto de regreso (j $for_j$). Esto mantiene al procesador saltando constantemente a direcciones de memoria anteriores, lo que puede afectar la caché de instrucciones.
+	
+	\end{itemize}
+	
+\subsection{Saltos Condicionales vs. Incondicionales}
+	Los algoritmos implementaste ambos:
+
+	\begin{itemize}
+		\item \textbf{Saltos Condicionales (ble, bge):} Son más costosos para el hardware porque dependen de una comparación previa. En tu QuickSort, las condiciones bge \$t4, \$t2, $while_1$ deciden si el bucle continúa o se rompe.
+		
+		\item \textbf{Saltos Incondicionales (j, jr):} Son más eficientes porque el destino es fijo, pero aun así interrumpen el flujo lineal de las instrucciones.
+	
+	\end{itemize}
+	
+\subsection{Eficiencia en la Implementación de QuickSort}
+	A diferencia de BubbleSort, QuickSort usa recursividad (saltos jal).
+	
+	\begin{itemize}
+		\item \textbf{Impacto Negativo:} El uso de jal obliga a manipular la pila (\$sp), lo que añade instrucciones de carga y almacenamiento (sw/lw) solo para gestionar el control del programa.
+		
+		\item \textbf{Impacto Positivo:} Al dividir el problema (Divide y Vencerás), el número total de veces que se ejecutan los saltos de comparación es mucho menor ($O(n \log n)$), compensando con creces el costo de gestionar la pila.
+		
+	\end{itemize}
+	
+\section{Diferencias de complejidad computacional entre el algoritmo Quicksort 
+	y el algoritmo alternativo y sus implicaciones en el entorno MIPS32}
+	
+\subsection{Comparativa de Complejidad Computacional}
+
+	\begin{tabular}{|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|>{\centering\arraybackslash}m{3cm}|}
+		\hline
+		Algoritmo & Caso Promedio & Peor Caso & Memoria Extra (Espacio \\
+		\hline
+		QuickSort & \$O(n \textbackslash{}log n)\$ & \$O(n\^{}2)\$ & \$O(\textbackslash{}log n)\$ (Pila de recursión) \\
+		\hline
+		BubbleSort & \$O(n\^{}2)\$ & \$O(n\^{}2)\$ & \$O(1)\$ (In-place) \\
+		\hline
+	\end{tabular}
+	
+	\begin{itemize}
+		\item \textbf{QuickSort:} Es un algoritmo de "divide y vencerás". En cada paso, reduce drásticamente el número de comparaciones necesarias para la siguiente etapa.
+		
+		\item \textbf{BubbleSort:} Es un algoritmo de comparación directa. Incluso en su versión optimizada (con el flag swapped), sigue siendo ineficiente para arreglos grandes porque su estructura de bucles anidados lo obliga a procesar casi todos los pares de elementos.
+	\end{itemize}
+	
+\subsection{Implicaciones en un Entorno MIPS32}
+
+La diferencia de complejidad no solo se traduce en tiempo, sino en cómo el procesador MIPS32 gestiona sus recursos finitos:
+
+	\begin{enumerate}[label=\alph*.]
+		\item Gestión de la Pila (Stack) y Memoria
+		
+			\begin{itemize}
+				\item \textbf{QuickSort:} Al ser recursivo, cada llamada genera un Stack Frame. En MIPS, esto implica múltiples instrucciones sw (save word) para preservar \$ra, \$a0, etc. Si el arreglo fuera extremadamente grande y el pivote fuera malo, QuickSort podría causar un Stack Overflow.
+				
+				\item \textbf{BubbleSort:} No usa la pila para la lógica principal (solo guarda registros al inicio). Es más seguro en términos de memoria, aunque sea más lento.
+			\end{itemize}
+		
+		\item Localidad de Datos y Caché
+
+			\begin{itemize}
+				\item \textbf{QuickSort:} Al saltar entre particiones (izquierda y derecha), tiene una localidad de datos menos predecible, lo que podría generar más cache misses en arquitecturas MIPS avanzadas.
+				
+				\item \textbf{BubbleSort:} Tiene una excelente localidad espacial. Accede a los elementos del arreglo uno tras otro ($v[j]$ y $v[j+1]$). En un procesador con caché, esto es eficiente porque los datos adyacentes ya están cargados.
+			\end{itemize}
+			
+		\item Cantidad de Instrucciones Ejecutadas (Instruction Count)
+	
+		En MIPS32, la métrica clave es el número de instrucciones.
+	
+		\begin{itemize}
+			\item \textbf{QuickSort:} aunque cada iteración es más compleja (debido al manejo de la pila), el número total de comparaciones es de aproximadamente $10,000$. La ganancia en velocidad es masiva a pesar del "overhead" de la recursión.
+			
+			\item \textbf{BubbleSort:} el contador de instrucciones crece de forma cuadrática. Para un arreglo de 1000 elementos, MIPS ejecutaría aproximadamente $1,000,000$ de iteraciones del bucle interno.
+		\end{itemize}
+		
+	\end{enumerate}
+	
+\section{Fases del ciclo de ejecución de instrucciones en la arquitectura MIPS32 }
+	
+	\begin{enumerate}
+		\item \textbf{IF (Instruction Fetch) Búsqueda de Instrucción:}
+			\\
+			En esta primera fase, el procesador obtiene la instrucción desde la memoria.
+			
+			\begin{itemize}
+				\item Se utiliza el valor del Program Counter (PC) para buscar la dirección de la siguiente instrucción en la memoria de instrucciones.
+				\item El PC se incrementa automáticamente en 4 (porque cada instrucción MIPS mide 32 bits / 4 bytes) para apuntar a la siguiente instrucción.
+			\end{itemize}
+		
+		\item \textbf{ID (Instruction Decode) - Decodificación y Lectura de Registros}
+			\\
+			Aquí el procesador prepara los datos.
+			
+			\begin{itemize}
+				\item La Unidad de Control identifica el código de operación (opcode). Simultáneamente, se accede al Banco de Registros para leer los valores de los registros fuente (por ejemplo, en add \$t0, \$t1, \$t2, se leen \$t1 y \$t2).
+				\item Si la instrucción tiene un valor inmediato (como el -16 en tu addi \$sp, \$sp, -16), se extiende a 32 bits.
+			\end{itemize}
+		
+		\item \textbf{EX (Execute) - Ejecución o Cálculo de Dirección}
+			\\
+			Es el corazón del procesamiento aritmético ALU.
+			\begin{itemize}
+				\item La ALU (Unidad Aritmético Lógica) realiza la operación solicitada.
+	
+			\end{itemize}
+		
+		\item \textbf{MEM (Memory Access) - Acceso a Memoria}
+			\\
+			Esta fase solo es activada por instrucciones de carga o almacenamiento.
+			
+		\item \textbf{WB (Write Back) - Escritura en Registros}
+			\\
+			El ciclo termina guardando el resultado.
+			\begin{itemize}
+				\item El valor calculado en la fase EX o el valor leído en la fase MEM se escribe de vuelta en el registro destino del banco de registros (por ejemplo, en el registro \$t0).
+				
+			\end{itemize}
+
+				
+	\end{enumerate}
+	
+	
+	Relación con los algoritmos de ordenamiento
+	
+	\begin{tabular}{|>{\centering\arraybackslash}m{6cm}|>{\centering\arraybackslash}m{5cm}|}
+		\hline
+		Fase & Ejemplo (lw \$t4, 0(\$t6)) \\
+		\hline
+		IF & Se busca el código binario de la instrucción lw \\
+		\hline
+		ID & Se identifica que es un load y se lee el valor del registro base \$t6 \\
+		\hline
+		EX & La ALU suma el contenido de \$t6 con el inmediato 0 para obtener la dirección real \\
+		\hline
+		MEM & Se accede a la RAM en la dirección calculada para extraer el valor del arreglo \\
+		\hline
+		WB & El valor obtenido de la RAM se guarda finalmente en el registro \$t4 \\
+		\hline
+	\end{tabular}
+	
+\section{Tipos de instrucciones utilizadas}
+
+\subsection{Instrucciones Tipo I (Immediate)}
+	Son las que incluyen un valor constante de 16 bits dentro de la 		instrucción.
+	
+	\begin{itemize}
+		\item \textbf{Ejemplos:}
+			\begin{itemize}
+				\item lw 
+				\item sw
+				\item addi
+				\item beq
+				\item bne
+				\item ble
+			\end{itemize}
+			
+		\item \textbf{Acceso a Memoria:} Todo ordenamiento requiere mover datos entre la RAM y los registros (lw / sw).
+			\begin{itemize}
+				\item Control de Bucles
+				\item Gestión de la Pila
+			\end{itemize}
+	\end{itemize}
+	
+\subsection{Instrucciones Tipo R (Register)}
+	Son aquellas donde todos los operandos son registros.
+	
+	\begin{itemize}
+		\item \textbf{Ejemplos:}
+		\begin{itemize}
+			\item add 
+			\item sub
+			\item sll
+			\item sra
+			\item move
+			\item jr
+		\end{itemize}
+		
+		\item \textbf{Cálculo de Direcciones:} Para acceder a array[i], usaste sll (shift left logical) para multiplicar el índice por 4 y add para sumarlo a la dirección base.
+		\item \textbf{Retorno de Funciones:} La instrucción jr \$ra es de tipo R y es la que permite que tus funciones QuickSort y BubbleSort regresen al punto de origen.
+		
+	\end{itemize}
+	
+\subsection{Instrucciones Tipo J (Jump)}
+	Son instrucciones de salto incondicional con una dirección de destino de 26 bits.
+	
+		\begin{itemize}
+		\item \textbf{Ejemplos:}
+			\begin{itemize}
+				\item j
+				\item jal
+			\end{itemize}
+		
+		\item \textbf{Llamadas a Funciones:} jal QuickSort y jal BubbleSort son fundamentales para modularizar el código.
+		\item \textbf{Saltos de Bucle:} El j $for_i$ al final de los ciclos para repetir la ejecución de forma incondicional.
+		
+	\end{itemize}
+	
+	\begin{tabular}{|>{\centering\arraybackslash}m{4cm}|>{\centering\arraybackslash}m{4cm}|>{\centering\arraybackslash}m{4cm}|}
+		\hline
+		Tipo & Predominio & Razón en la práctica \\
+		\hline
+		I & Muy Alto & Debido a la enorme cantidad de accesos a memoria (lw/sw) y constantes para manejar los índices y la pila. \\
+		\hline
+		R & Alto & Necesario para la aritmética de punteros (multiplicar el índice por 4) y para realizar los cálculos lógicos entre registros. \\
+		\hline
+		J & Bajo & Limitado a las llamadas de función iniciales y los saltos incondicionales de cierre de bucles. \\
+		\hline
+	\end{tabular}
+
+
+\section{Como se ve afectado el rendimiento si se abusa del uso de instrucciones de salto en lugar de las lineales}
+	\begin{itemize}
+		\item Ruptura del Pipeline y Burbujas (Stalls)
+		MIPS32 está diseñado para ejecutar una instrucción en cada ciclo de reloj mediante el solapamiento de fases (IF, ID, EX, MEM, WB).
+		
+		\item Fallos en la Predicción de Saltos. Los procesadores modernos intentan "adivinar" si un beq o bne se cumplirá.
+		
+		\item En la arquitectura MIPS original, la instrucción que sigue inmediatamente a un salto (j, beq, bne) se ejecuta siempre, sin importar si el salto se toma o no.
+		
+		\item El rendimiento depende de que las instrucciones estén cerca unas de otras en la memoria. altos Frecuentes: Obligan al "puntero de instrucciones" (PC) a saltar a direcciones lejanas. Esto puede causar un Cache Miss (el procesador no encuentra la instrucción en la memoria rápida y debe ir a la RAM lenta), lo que detiene el sistema por decenas de ciclos.
+		
+	\end{itemize}
+	
+\section{Ventajas ofrece el modelo RISC de MIPS en la implementación de algoritmos }
+	El modelo RISC (Reduced Instruction Set Computer) de MIPS ofrece ventajas estratégicas para los algoritmos de ordenamiento, centrándose en la simplicidad para ganar velocidad.
+	\\
+	
+	\begin{itemize}
+		\item Formato de Instrucciones de Tamaño Fijo, , todas las instrucciones miden exactamente 32 bits.
+		
+		\item Arquitectura Carga-Almacenamiento, MIPS no permite realizar operaciones aritméticas directamente sobre la memoria; todo debe pasar por registros.
+		
+		\item Gran Banco de Registros de Propósito General
+		MIPS ofrece 32 registros de 32 bits.
+		
+		\item Ciclo de Ejecución Simple y Predecible (Un ciclo por instrucción),
+		La filosofía RISC apunta a que cada instrucción realice una tarea pequeña que pueda completarse en un solo ciclo de reloj (gracias al Pipeline).
+		
+	\end{itemize}
+	
+\section{Ejecución paso a paso en MARS para verificar 
+	la correcta ejecución del algoritmo}
+	
+	En amnbos algoritmos se ejecutaron paso a paso prestando especial atencion en las instruciones de posicionamiento en los arreglos, cambio de valores como:
+	
+	\begin{itemize}
+		\item swap
+		\item asignaciones (li,la,move,addi)
+		\item incremento de contadores
+		\item saltos condicionales
+		\item saltos incondicionales
+		\item recuperacion de datos guardados en la pila
+		\item recuperacion de la return address
+		\item una subrutina para visualizar el arreglo por terminal
+	\end{itemize}
+	
+\section{Herramienta de MARS fue más útil para observar el contenido de los registros y 
+	detectar errores lógicos}
+	
+	El resaltado de ejecución (o Instruction Trace) en MARS fue fundamental para la depuración, ya que permitió mapear visualmente el flujo de control. Al observar el comportamiento del resaltado en las estructuras de bucle del QuickSort, se pudo verificar que las condiciones de salida se alcanzaran efectivamente, evitando estados de ciclo infinito mediante la observación directa de los saltos de retorno
+	
+\section{Visualizar en MARS el camino de datos para una instrucción tipo R y I}
+Para visualizar el camino de datos de una instrucción tipo R en MARS, la herramienta específica se llama MIPS X-Ray. Esta es una de las funciones más avanzadas del simulador para entender qué ocurre físicamente dentro del procesador.
+
+\begin{figure}[H] % [H] fuerza la posición exacta
+	\centering % Centra la imagen
+	\includegraphics[width=1.1\textwidth]{instR.png} % Ajusta el ancho
+	\caption{Tipo R: add }
+	\label{fig:imagen1}
+\end{figure}
+
+\begin{figure}[H] % [H] fuerza la posición exacta
+	\centering % Centra la imagen
+	\includegraphics[width=1.1\textwidth]{instI.png} % Ajusta el ancho
+	\caption{Tipo I: lw }
+	\label{fig:imagen2}
+\end{figure}
+
+\section{Justificación la elección del algoritmo alternativo}
+	la justificación de elegir BubbleSort como algoritmo alternativo (frente a uno más complejo como QuickSort) debe basarse en la simplicidad arquitectónica, el uso de recursos y la facilidad de depuración en un entorno de bajo nivel como MIPS32
+	
+	\begin{itemize}
+		\item A diferencia de QuickSort, que es recursivo y requiere una gestión constante de la pila para salvar \$ra, \$a0 y registros temporales, BubbleSort es iterativo.
+		
+		\item Baja Complejidad de Implementación
+		
+		\item Ya estaba implementado como activadaden el curso.
+		
+		\item Es el primer algoritmo de ordenamiento que por lo general se aprende.
+	\end{itemize}
+	
+\section{Análisis y Discusión de los Resultados}
+
+	\subsection{Eficiencia Algorítmica en MIPS32}
+		Durante las pruebas, se observó una diferencia drástica en el número de instrucciones ejecutadas (Instruction Count). Mientras que QuickSort requiere una configuración inicial compleja (manejo de pila y recursión), su estrategia de "divide y vencerás" reduce significativamente el número total de comparaciones en comparación con BubbleSort.
+	
+	\subsection{Gestión de Registros y Memoria}
+		La discusión sobre los registros es fundamental. Se validó que:
+		\begin{itemize}
+			\item El uso de registros temporales (\$t0-\$t9) en los bucles internos.
+			\item La preservación de registros guardados (\$s0-\$s7) y de la dirección de retorno (\$ra) en la pila permitió que las funciones fueran reentrantes (especialmente en QuickSort), demostrando la importancia de la convención de llamadas de MIPS.
+			
+		\end{itemize}
+		
+		\subsection{Impacto de las Estructuras de Controle}
+			Se analizó que los saltos condicionales son el principal cuello de botella en el pipeline.
+			\begin{itemize}
+				\item En BubbleSort, la alta frecuencia de ble y j provoca rupturas constantes en el flujo secuencial de instrucciones.
+				\item En QuickSort, el flujo es más errático debido a la recursividad, pero al procesar menos elementos, el impacto total en el pipeline es menor que en una ejecución masiva de BubbleSort.
+			\end{itemize}
+		
+		\subsection{Observaciones con Herramientas de MARS}
+			El uso de MIPS X-Ray y el Data Segment permitió confirmar que:
+			\begin{itemize}
+				\item El intercambio (swap) de datos es la operación más costosa a nivel de hardware, ya que involucra las 5 fases del ciclo de instrucción, especialmente la fase MEM.
+				\item El resaltado de ejecución fue la clave para identificar que el algoritmo de QuickSort convergía correctamente hacia el caso base, evitando desbordamientos de memoria.
+			\end{itemize}
+	\newpage
+	\begin{abstract}
+		Los resultados demuestran que en la arquitectura MIPS32, la eficiencia no solo depende del algoritmo elegido, sino de cómo este interactúa con la jerarquía de memoria y el banco de registros. Aunque QuickSort presenta una mayor complejidad de implementación en ensamblador, su optimización en el conteo de instrucciones lo hace superior para arreglos de gran escala. Por otro lado, BubbleSort destaca por su predictibilidad y bajo consumo de memoria volátil (pila), siendo una opción viable para sistemas con restricciones estrictas de hardware.
+	\end{abstract}
+
+\end{document}
