@@ -1,0 +1,257 @@
+\documentclass[]{article}
+\usepackage[spanish]{babel}
+
+%opening
+\title{\Huge {\textbf{Practica III}}}
+\author{\LARGE  {\textbf{Adrian Cordero}}}
+
+\begin{document}
+
+\maketitle
+\newpage
+
+\section{Explicación de la organización de datos en la memoria cuando un sistema utiliza memory-mapped 
+	I/O }
+	
+	Entender el Memory-Mapped I/O (MMIO) es clave porque rompe la idea de que la memoria es solo para guardar datos. En este esquema, el procesador trata a los periféricos (teclado, pantalla, sensores) como si fueran simples celdas de RAM.
+	
+	\begin{enumerate}
+		\item \textbf{Organización del Espacio de Direcciones:}\\
+			En un sistema con MMIO, el espacio de direccionamiento (el rango total de direcciones que el CPU puede generar) se divide. Una parte va a la memoria física (RAM) y otra parte se reserva para los registros de los dispositivos.
+			\begin{itemize}
+				\item Direcciones de RAM: Acceden a chips de memoria volátil
+				\item Direcciones de I/O: Al ''escribir'' aquí, no se guarda un dato en un chip de silicio, sino que activa un cable que llega a un periférico.
+			\end{itemize}
+			
+		\item  \textbf{¿Dónde se mapean en MIPS32?}\\
+			Aunque teóricamente podrían estar en cualquier lado, en la arquitectura MIPS32 los dispositivos suelen mapearse en el segmento kseg1.
+			\begin{itemize}
+				\item \textbf{Rango típico:} 0xA000 0000 hasta 0xBFFF FFFF.
+				\item \textbf{Por qué kseg1:} Este segmento es ''Uncached'' (no pasa por la memoria caché). Esto es vital porque si el CPU leyera el estado de un botón desde la caché en lugar del hardware real
+			\end{itemize}
+	\end{enumerate}
+	
+	\subsection{Implicaciones para lw y sw}
+		No se necesita instrucciones especiales para hablar con el hardware. Se usan las mismas para registros normales.
+		\begin{enumerate}
+			\item \textbf{Universalidad:} La instrucción lw \$t0, 0(\$t1) se usa tanto para leer un entero de la RAM como para leer el estado de un teclado.
+			\item \textbf{Efectos secundarios:} A diferencia de la RAM, leer (lw) o escribir (sw) en una dirección de I/O suele disparar acciones.
+			\begin{itemize}
+				\item Un sw a un registro de transmisión enviará un byte por un puerto serie.
+				\item Un lw a un registro de estado podría ''limpia'' automáticamente una bandera de interrupción.
+			\end{itemize}
+		\end{enumerate}
+		
+\section{Principales diferencia entre memory-mapped I/O y la entrada/salida por 
+	puertos}
+	
+	\subsection{Diferencias}
+		La diferencia radica en si el procesador tiene un camino único para todo o rutas separadas para memoria y dispositivos.
+		\begin{itemize}
+			\item\textbf{ Memory-Mapped I/O (MMIO):} El procesador ve todo como una gran extensión de direcciones.
+			\item \textbf{Isolated I/O (Por puertos):} El procesador tiene un espacio de direcciones separado para la entrada/salida.
+		\end{itemize}
+		
+	\subsection{Ventajas y Desventajas}
+		\begin{enumerate}
+			\item \textbf{Memory-Mapped I/O}\\\\
+				\textbf{Ventajas:}
+				\begin{itemize}
+					\item \textbf{Simplicidad del Hardware:} El CPU no necesita pines extras ni instrucciones especiales.
+					\item \textbf{Poder de manipulación:} Se puede usar cualquier instrucción con los periféricos.
+				\end{itemize}
+				\textbf{Desventajas:}
+				\begin{itemize}
+					\item \textbf{Robo de direcciones:} Cada dispositivo conectado quita un pedazo de memoria que podría usarse para RAM.
+					\item \textbf{Peligro de la Caché:} Si el sistema intenta guarda el valor de un sensor en la memoria caché.
+				\end{itemize}
+			\item \textbf{I/O por Puertos}\\\\
+			\textbf{Ventajas:}
+			\begin{itemize}
+				\item \textbf{Protección y Orden:} El espacio de memoria para programas está totalmente limpio.
+				\item \textbf{Espacio dedicado:} Si se tiene todos los 4GB de RAM disponibles porque los periféricos viven en su propio espacio aparte.
+			\end{itemize}
+			\textbf{Desventajas:}
+			\begin{itemize}
+				\item \textbf{Rigidez:} Está limitado a las instrucciones que el fabricante diseñó para los puertos.
+				\item \textbf{Complejidad del bus:} El hardware necesita una señal extra.
+			\end{itemize}
+				
+				
+		\end{enumerate}
+		
+	\subsection{¿Por qué MIPS32 prefiere MMIO?}
+		MIPS es el ejemplo de libro de una arquitectura RISC (Reduced Instruction Set Computer). Su filosofía es mantenerlo simple para ser rápido.
+		\begin{itemize}
+			\item \textbf{Reducción del ISA (Instruction Set Architecture):} Al usar MMIO, MIPS no necesita gastar bits en el código de operación para crear instrucciones de entrada/salida.
+			\item \textbf{Uso de registros generales:} Con MMIO, se puede cargar un valor de un sensor directamente a un registro, sumarle algo y guardarlo en otro periférico usando el mismo pipeline de ejecución que cualquier otra operación de datos.
+		\end{itemize}
+		
+\section{Problemas que pueden surgir si los 
+	dispositivos usan direcciones solapadas}
+	
+	Si se da la situación CPU lanza una instrucción lw \$t0, 0xFFFF0000. Si un teclado y un sensor de temperatura están mapeados en esa misma dirección, ambos intentarán poner sus datos en el bus de datos al mismo tiempo.
+	\begin{itemize}
+		\item \textbf{Corrupción de datos:} Si el teclado quiere enviar un 0 (0 voltios) y el sensor un 1 (5 voltios) en el mismo cable, el
+		voltaje resultante será errático. El CPU leerá basura.
+		\item \textbf{Cortocircuito físico:} A nivel eléctrico, un dispositivo está intentando llevar la línea a tierra mientras el otro la intenta llevar a voltaje. Esto genera un flujo de corriente excesivo que puede calentar o incluso quemar los controladores de bus de los periféricos.
+		\item \textbf{Indeterminación:} El sistema se vuelve inestable. A veces ganará un dispositivo, a veces otro, y el software se comportará de manera impredecible (glitches).
+	\end{itemize}
+	
+	\subsection{¿Cómo se evita?}
+		Para que esto no ocurra, el sistema utiliza un componente llamado Decodificador de Direcciones (Address Decoder).\\\\
+		Funciona mediante una señal llamada Chip Select (CS) o Slave Select (SS):
+		\begin{enumerate}
+			\item El CPU pone una dirección en el Bus de Direcciones.
+			\item El Decodificador de Direcciones analiza esa dirección.
+			\item El decodificador activa una y solo una línea de Chip Select.
+				\begin{itemize}
+					\item Si la dirección es 0xFFFF0000, activa el CS del Teclado.
+					\item Si la dirección es 0xFFFF0010, activa el CS del Sensor.
+				\end{itemize}
+			\item Solo el dispositivo que tiene su CS activo tiene permiso para comunicarse en el bus de datos.
+		\end{enumerate}
+		
+\section{Simplificación del conjunto de instrucciones }
+	Cuando se usa MMIO, el procesador no sabe que existe la entrada/salida. Solo
+	 sabe que existe la memoria. Esto simplifica el diseño en tres niveles:
+	\begin{itemize}
+		\item \textbf{Menos OpCodes:} No necesita reservar bits  en el formato de instrucción para comandos de I/O.
+		\item \textbf{Unidad de Control más simple:} La lógica interna que decodifica las instrucciones no necesita un camino de datos extra para puertos.
+		\item \textbf{Pipeline Unificado:} En MIPS, todas las instrucciones de memoria pasan por la misma etapa del pipeline (la etapa MEM).
+	\end{itemize}
+	
+	\subsection{¿Qué instrucciones extras necesitaría?}
+		Si MIPS32 usara E/S por puertos, se necesitaría, como mínimo:
+		\begin{itemize}
+			\item \textbf{Instrucciones de Movimiento:} IN (leer del puerto al registro) y OUT (escribir del registro al puerto).
+			\item \textbf{Variaciones de Tamaño:} INB (byte), INW (word), OUTB, OUTW.
+			\item \textbf{Modos de Direccionamiento:} Se tendría que definir cómo especificar el número de puerto (¿un valor inmediato?, ¿un registro?).
+		\end{itemize}
+		
+\section{Bus de datos y direcciones}
+	Para el procesador MIPS32, no hay diferencia entre una dirección de RAM y una de un periférico. El CPU simplemente pone una dirección en el bus y espera que alguien le responda. El que decide quién habla es el Decodificador de Direcciones.
+	
+	\subsection{1. El Ciclo de Bus (Paso a Paso)}
+		Cuando se ejecuta, por ejemplo, sw \$t0, 0(0xFFFF0000) para encender un LED:
+		\begin{enumerate}
+			\item \textbf{Generación de Dirección:} La Unidad de Control del MIPS pone el valor 0xFFFF0000 en el Bus de Direcciones (un conjunto de 32 cables físicos paralelos e independientes).
+			\item \textbf{Señales de Control:} Simultáneamente, el CPU activa la señal de Escritura (Write Enable) y pone el dato que estaba en \$t0 en el Bus de Datos.
+			\item  \textbf{La Intervención del Decodificador: }Aquí Un circuito externo (fuera del CPU) monitorea constantemente el Bus de Direcciones.
+			\begin{itemize}
+				\item Este circuito detecta que la dirección empieza por 0xFFFF.
+				\item Como el diseñador del hardware decidió que 0xFFFF es para periféricos, el decodificador desactiva la señal de selección de la RAM.
+				\item El decodificador activa la señal de Chip Select (CS) específica del controlador del LED.
+			\end{itemize}
+		\end{enumerate}
+		
+	\subsection{¿Cómo sabe el hardware a quién le toca?}
+		El hardware no ''piensa'', solo reacciona a la lógica booleana. El Decodificador de Direcciones es básicamente una puerta lógica gigante (o una serie de ellas).
+		\begin{itemize}
+			\item \textbf{ Si la dirección está en el rango de RAM:} El decodificador habilita los chips de memoria.
+			\item \textbf{Si la dirección está en el rango de I/O:} El decodificador habilita el periférico.
+		\end{itemize}
+		
+
+\section{Posibilidad que un programa normal acceda a un dispositivo mapeado 
+	en memoria}			
+
+	En un sistema MIPS32 moderno con un sistema operativo (como Linux), la respuesta corta es no: un programa normal (en User Mode) no puede tocar directamente el hardware.
+	\begin{enumerate}
+		\item \textbf{Modos de Ejecución (Kernel vs. User)}\\\\
+			El procesador MIPS32 tiene un registro llamado Status (en el Coprocesador 0). Uno de sus bits determina el nivel de privilegio:
+			\begin{itemize}
+				\item \textbf{Kernel Mode (Modo Núcleo):} El CPU tiene permiso para acceder a cualquier dirección de memoria, incluyendo los rangos de I/O (como kseg1).
+				\item \textbf{User Mode (Modo Usuario):} El CPU tiene restringido el acceso a ciertas áreas. Si un programa intenta ejecutar un lw a una dirección de periférico, el hardware genera una excepción de dirección no permitida.
+			\end{itemize}
+		\item \textbf{La Unidad de Gestión de Memoria (MMU) y el TLB}\\\\
+			El mecanismo principal de protección es la MMU (Memory Management Unit). En MIPS, la MMU utiliza una tabla llamada TLB (Translation Lookaside Buffer).\\\\
+			Cuando un programa de usuario intenta acceder a una dirección:
+			\begin{enumerate}
+				\item El programa usa una dirección virtual
+				\item La MMU busca esa dirección en el TLB para traducirla a una dirección física.
+				\item Cada entrada en el TLB tiene bits de protección (lectura, escritura, ejecución y nivel de privilegio).
+				\item Si el programa es de ''usuario'' y la página de memoria está marcada como ''solo kerne'' o simplemente no está mapeada para ese proceso, la MMU bloquea el acceso antes de que la señal llegue siquiera al bus de datos.
+			\end{enumerate}
+		\item \textbf{Segmentación de Memoria en MIPS}\\\\
+			MIPS32 tiene una división física de la memoria muy estricta que ayuda a esta protección:
+			\begin{itemize}
+				\item \textbf{kuseg (0x0000 0000 a 0x7FFF FFFF)}: Es el único rango al que un programa de usuario puede acceder.
+				\item \textbf{kseg0 / kseg1 (0x8000 0000 en adelante):} Estas son regiones de Kernel. Como los dispositivos MMIO suelen mapearse en kseg1 (para evitar la caché), quedan físicamente fuera del alcance de un proceso normal.
+			\end{itemize}
+		\item \textbf{¿Cómo accede entonces un programa al hardware?}\\\\
+			Si el programa quiere escribir en la pantalla o enviar algo por red, no lo hace él mismo. Utiliza una Llamada al Sistema (System Call):
+			\begin{enumerate}
+				\item El programa ejecuta la instrucción syscall.
+				\item El CPU cambia a Kernel Mode y salta a una dirección específica del Sistema Operativo.
+				\item El kernel verifica si el usuario tiene permisos.
+				\item Si los tiene, el kernel ejecuta el sw o lw en la dirección del periférico.
+				\item El kernel le devuelve el resultado al usuario y vuelve a User Mode.
+			\end{enumerate}
+			
+	\end{enumerate}
+	
+\section{Técnicas para evitar esperas activas innecesarias al interactuar
+	con dispositivos}
+	En MIPS32, si el procesador se queda en un bucle esperando a que un periférico responda, se estan desperdiciando millones de ciclos de reloj. A esto se le llama Polling (o espera activa).\\
+	
+	Para evitar este desperdicio del CPU, existen tres técnicas principales:
+	
+	\begin{enumerate}
+		\item \textbf{Interrupciones (Hardware Interrupts)}\\\\
+			Es la técnica más eficiente. En lugar de que el CPU preguntar, el dispositivo le comunica al CPU cuando termina.
+			\begin{itemize}
+				\item \textbf{Cómo funciona:} El CPU sigue ejecutando su programa normal. Cuando el periférico tiene el dato listo, activa una línea física de interrupción conectada al procesador.
+				\item \textbf{En MIPS32:} El CPU termina la instrucción actual, guarda el Program Counter (PC) en un registro especial (EPC) y salta a una rutina de manejo de interrupciones (ISR).
+				\item \textbf{Ventaja:} El CPU solo atiende al dispositivo cuando es estrictamente necesario.
+			\end{itemize}
+		\item \textbf{DMA (Direct Memory Access)}
+			\begin{itemize}
+				\item \textbf{Cómo funciona:} El CPU le dice al controlador de DMA: ''Copia estos datos de la dirección A a la B y avísame cuando termines''. Luego, el CPU se desentiende.
+				\item \textbf{El robo de ciclos:} El controlador DMA toma el control del bus de datos y direcciones mientras el CPU hace otras cosas (siempre que el CPU no necesite el bus en ese instante).
+				\item \textbf{Ventaja:} Libera al CPU de tareas de movimiento de datos masivos.
+			\end{itemize}
+		\item \textbf{Buffering y FIFO (First-In, First-Out)}\\\\
+			A veces el problema es que el CPU es demasiado rápido y el periférico demasiado lento (o viceversa).
+			\begin{itemize}
+				\item \textbf{Cómo funciona:} Se coloca una pequeña memoria intermedia (cola FIFO) en el hardware del dispositivo. El dispositivo va llenando la cola y, cuando esta llega a un umbral (por ejemplo, al 75\% de su capacidad), genera una interrupción.
+				\item \textbf{Ventaja:} En lugar de interrumpir al CPU por cada byte (lo cual genera mucho gasto de gestión o overhead), lo interrumpes una vez por cada ráfaga de datos.
+			\end{itemize}
+	\end{enumerate}
+	
+\section{Análisis y Discusión de los Resultados}
+	Para cerrar este análisis técnico sobre MIPS32 y Memory-Mapped I/O (MMIO), se va a sintetizar cómo todos estos conceptos (direcciones, buses, protección y eficiencia) se integran en un sistema funcional.
+	\\\\
+	Un análisis detallado y específico de los resultados de este diseño arquitectónico:
+	\begin{enumerate}
+		\item \textbf{Integración del Espacio de Direccionamiento}\\\\
+			El resultado más crítico de usar MMIO es la creación de un mapa de memoria unificado. En MIPS32, esto no es aleatorio, el hardware está diseñado para que el procesador vea diferentes tipos de recursos según el rango de bits superiores de la dirección:
+			\begin{itemize}
+				\item \textbf{Segmentación kseg1 (0xA0000000 - 0xBFFFFFFF):}\\ Este es el espacio del hardware. Al ser uncached, garantiza que cada instrucción lw o sw resulte en una transacción real en el bus físico. Sin esta segmentación, la coherencia de datos entre el periférico y el CPU se rompería debido a la memoria caché.
+				\item  \textbf{Decodificación por Hardware:}\\ El éxito del sistema depende de la lógica externa. Si el decodificador de direcciones no es preciso, se producen conflictos de bus (cortocircuitos lógicos) o aliasing (espejos de memoria), lo que reduce la eficiencia del direccionamiento.
+			\end{itemize}
+		\item \textbf{Impacto en la Eficiencia del Pipeline}\\\\
+			En una arquitectura RISC como MIPS32, el uso de MMIO permite mantener un pipeline de 5 etapas (IF, ID, EX, MEM, WB) extremadamente limpio:
+			\begin{itemize}
+				\item \textbf{Ortogonalidad de Instrucciones:}\\
+				No hay burbujas o paradas especiales en el pipeline para instrucciones de E/S porque no existen. La etapa MEM trata un sensor de temperatura exactamente igual que una variable en la pila (stack).
+				\item \textbf{Carga de Trabajo del Compilador:}\\ Al no haber instrucciones IN/OUT, esto optimiza el código generado, permitiendo que el optimizador de registros del compilador trabaje con datos de E/S como si fueran variables locales.
+			\end{itemize}
+		\item \textbf{La Velocidad: CPU vs. Periféricos}\\\\
+			Uno de los resultados más evidentes en la práctica es la brecha de velocidad. Un CPU MIPS puede correr a cientos de MHz, mientras que una UART (puerto serie) puede tardar milisegundos en enviar un carácter.
+			\begin{itemize}
+				\item \textbf{El fracaso de la Espera Activa (Polling):}\\ El análisis demuestra que el polling es ineficiente en sistemas multiprogramados. Mantener al CPU en un bucle beq revisando un bit de estado desperdicia el determinismo del sistema.
+				\item \textbf{La Solución Determinista (Interrupciones):}\\ El uso del Coprocesador 0 (CP0) para gestionar excepciones e interrupciones es lo que permite que MIPS sea una arquitectura de tiempo real. El registro Cause y el EPC (Exception Program Counter) permiten que el contexto se guarde y recupere sin perder datos del programa principal.
+			\end{itemize}
+			
+		\item \textbf{Seguridad y Protección}\\\\
+			El diseño de MMIO en MIPS32, combinado con el TLB (Translation Lookaside Buffer), crea una frontera infranqueable para el software malicioso o mal escrito:
+			\begin{itemize}
+				\item \textbf{Aislamiento de Privilegios:}\\ El hecho de que MMIO resida en el espacio de kernel (kseg1) significa que un error de segmentación (SegFault) en una aplicación de usuario nunca podrá resetear accidentalmente el controlador de interrupciones o apagar un periférico crítico.
+				\item \textbf{Abstracción mediante System Calls:} Los resultados muestran que el modelo ideal es aquel donde el usuario solicita una operación y el kernel, con privilegios de supervisor, ejecuta el acceso físico al bus.
+			\end{itemize}
+	\end{enumerate}
+	
+	
+	
+\end{document}
